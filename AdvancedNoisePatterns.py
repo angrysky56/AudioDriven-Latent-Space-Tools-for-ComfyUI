@@ -22,7 +22,8 @@ class AdvancedNoisePatterns:
     def generate_simplex(self, shape, freq):
         coords = torch.stack(torch.meshgrid(
             torch.linspace(-np.pi, np.pi, shape[0]),
-            torch.linspace(-np.pi, np.pi, shape[1])
+            torch.linspace(-np.pi, np.pi, shape[1]),
+            indexing="ij"
         ))
         return torch.tanh(torch.sin(coords[0] * freq) * torch.cos(coords[1] * freq * 1.5)) * \
                torch.sigmoid(torch.cos(coords[0] * freq * 0.7) * torch.sin(coords[1] * freq * 2))
@@ -59,7 +60,7 @@ class AdvancedNoisePatterns:
     def generate_wave(self, shape, frequency, phases):
         x = torch.linspace(-np.pi, np.pi, shape[1])
         y = torch.linspace(-np.pi, np.pi, shape[0])
-        xx, yy = torch.meshgrid(x, y)
+        xx, yy = torch.meshgrid(x, y, indexing="ij")
         
         wave1 = torch.sin(xx * frequency + phases[0]) * torch.cos(yy * frequency * 1.3 + phases[1])
         wave2 = torch.cos(xx * frequency * 0.7 + phases[1]) * torch.sin(yy * frequency * 1.7 + phases[0])
@@ -71,7 +72,8 @@ class AdvancedNoisePatterns:
         height, width = noise.shape
         grid_x, grid_y = torch.meshgrid(
             torch.linspace(-1, 1, width),
-            torch.linspace(-1, 1, height)
+            torch.linspace(-1, 1, height),
+            indexing="ij"
         )
         
         warp = torch.stack([
@@ -99,14 +101,14 @@ class AdvancedNoisePatterns:
         }
         
         # Merge provided parameters with defaults
-        if not noise_params:
+        if not noise_params or not isinstance(noise_params, dict):
             noise_params = default_noise_params
         else:
             for key in default_noise_params:
                 if key not in noise_params:
                     noise_params[key] = default_noise_params[key]
         
-        timestamps = noise_params["timestamps"]
+        timestamps = noise_params.get("timestamps", [])
         if len(timestamps) == 0:
             return ({"samples": torch.zeros((1, 4, height//8, width//8))}, [0.0])
         
@@ -114,14 +116,16 @@ class AdvancedNoisePatterns:
         latent_height, latent_width = height//8, width//8
         noise_batch = torch.zeros((batch_size, 4, latent_height, latent_width))
         
-        base_params = noise_params[noise_type]
-        intensity = base_params.get("intensity", 1.0)
-        persistence = base_params.get("persistence", 0.5)
+        base_params = noise_params.get(noise_type, {})
+        intensity = float(base_params.get("intensity", 1.0))
+        persistence = float(base_params.get("persistence", 0.5))
+
+        last_ts = float(timestamps[-1]) if len(timestamps) > 0 else 0.0
 
         for i, timestamp in enumerate(timestamps):
-            time_scale = (timestamp / timestamps[-1]) ** 0.3
+            time_scale = ((float(timestamp) / last_ts) ** 0.3) if last_ts > 0 else 0.0
             energy_factor = intensity * (1 + np.exp(time_scale * 2) - 1)
-            chaos = 0.5 + abs(np.sin(timestamp * 10)) * 2
+            chaos = 0.5 + abs(np.sin(float(timestamp) * 10)) * 2
             
             if noise_type == "simplex":
                 freq = 1 + energy_factor * 30
@@ -139,23 +143,29 @@ class AdvancedNoisePatterns:
                 
             elif noise_type == "wave":
                 freq = 0.3 + energy_factor * 12
-                phase_x = timestamp * 8 * np.pi * chaos
-                phase_y = timestamp * 6 * np.pi * (2 - chaos)
+                phase_x = float(timestamp) * 8 * np.pi * chaos
+                phase_y = float(timestamp) * 6 * np.pi * (2 - chaos)
                 base_noise = self.generate_wave((latent_height, latent_width), freq, [phase_x, phase_y])
                 
             elif noise_type == "domain_warp":
                 base_noise = self.generate_simplex((latent_height, latent_width), 2 * chaos)
                 warp_factor = 0.1 + energy_factor * 1.2
-                base_noise = self.domain_warp(base_noise, warp_factor, timestamp)
+                base_noise = self.domain_warp(base_noise, warp_factor, float(timestamp))
+            else:
+                base_noise = torch.randn((latent_height, latent_width))
 
-            base_noise = (base_noise - base_noise.min()) / (base_noise.max() - base_noise.min())
+            denom = float(base_noise.max() - base_noise.min())
+            if denom > 0:
+                base_noise = (base_noise - base_noise.min()) / denom
+            else:
+                base_noise = torch.zeros_like(base_noise)
             
             for c in range(4):
                 channel_phase = c * np.pi / 2 * chaos
                 channel_noise = torch.sin(base_noise * (8 + channel_phase)) * energy_factor
                 noise_batch[i, c] = torch.tanh(channel_noise * 2)
 
-        return ({"samples": noise_batch}, timestamps)
+        return ({"samples": noise_batch}, [float(t) for t in timestamps])
 
 NODE_CLASS_MAPPINGS = {
     "AdvancedNoisePatterns": AdvancedNoisePatterns

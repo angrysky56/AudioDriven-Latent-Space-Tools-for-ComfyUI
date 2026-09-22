@@ -3,6 +3,12 @@ name = "audiodriven-latent-space-tools-for-comfyui"
 description = "This is a custom node for ComfyUI that analyzes audio files using Librosa, extracting tempo, beat times, energy levels, and timestamps. The analysis results can be displayed in a text box within ComfyUI."
 version = "1.0.0"
 license = {file = "LICENSE"}
+dependencies = [
+    "librosa",
+    "numpy",
+    "soundfile",
+    "torch"
+]
 
 [project.urls]
 Repository = "https://github.com/Kayarte/AudioDriven-Latent-Space-Tools-for-ComfyUI"
